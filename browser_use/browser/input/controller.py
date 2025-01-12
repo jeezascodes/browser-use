@@ -5,6 +5,12 @@ from typing import Optional, Tuple
 import pyautogui
 from playwright.async_api import Page
 
+from browser_use.browser.input.coordinates import (
+    ElementBounds,
+    WindowBounds,
+    calculate_click_coordinates,
+    get_screen_bounds
+)
 from browser_use.dom.views import DOMElementNode
 
 logger = logging.getLogger(__name__)
@@ -13,7 +19,7 @@ class PhysicalInputController:
     """
     Handles physical mouse and keyboard interactions through PyAutoGUI.
     Provides methods for converting DOM coordinates to screen coordinates and
-    verifying element positions before performing physical actions.
+    performing physical input actions.
     """
 
     def __init__(self):
@@ -43,9 +49,9 @@ class PhysicalInputController:
             return self._mock_coordinates
 
         # Get element position relative to viewport
-        bounds = await page.evaluate("""(xpath) => {
+        bounds = await page.evaluate("""(params) => {
             const element = document.evaluate(
-                xpath, 
+                params.xpath, 
                 document, 
                 null,
                 XPathResult.FIRST_ORDERED_NODE_TYPE, 
@@ -56,91 +62,33 @@ class PhysicalInputController:
             
             const rect = element.getBoundingClientRect();
             return {
-                x: rect.left + (rect.width / 2),
-                y: rect.top + (rect.height / 2),
+                x: rect.left,
+                y: rect.top,
                 width: rect.width,
                 height: rect.height
             };
-        }""", element_node.xpath)
+        }""", {"xpath": element_node.xpath})
 
         if not bounds:
             raise ValueError(f"Could not find element with xpath: {element_node.xpath}")
 
         # Get browser window position on screen
-        window_bounds = await page.evaluate("""() => {
+        window_position = await page.evaluate("""() => {
             return {
                 x: window.screenX || window.screenLeft,
                 y: window.screenY || window.screenTop
             };
         }""")
 
-        # Calculate absolute screen coordinates
-        x = int(window_bounds['x'] + bounds['x'])
-        y = int(window_bounds['y'] + bounds['y'])
-
-        return (x, y)
-
-    async def verify_element_position(
-        self,
-        page: Page,
-        element_node: DOMElementNode,
-        x: int,
-        y: int
-    ) -> bool:
-        """
-        Verifies an element is at the expected screen coordinates.
+        # Calculate click coordinates using our utility
+        element_bounds = ElementBounds(**bounds)
+        window_bounds = WindowBounds(**window_position)
         
-        Args:
-            page: Playwright page instance
-            element_node: DOM element to verify
-            x: Expected screen x coordinate
-            y: Expected screen y coordinate
-            
-        Returns:
-            True if element is at expected position
-        """
-        try:
-            # Convert screen coordinates back to page coordinates
-            window_bounds = await page.evaluate("""() => {
-                return {
-                    x: window.screenX || window.screenLeft,
-                    y: window.screenY || window.screenTop
-                };
-            }""")
-            
-            x = x - window_bounds['x']
-            y = y - window_bounds['y']
-
-            # Verify element at position
-            is_correct_element = await page.evaluate("""(xpath, x, y) => {  # type: ignore[call-arg]
-                const element = document.evaluate(
-                    xpath,
-                    document,
-                    null,
-                    XPathResult.FIRST_ORDERED_NODE_TYPE,
-                    null
-                ).singleNodeValue;
-                
-                if (!element) return false;
-                
-                // Get element at position
-                const elementAtPoint = document.elementFromPoint(x, y);
-                if (!elementAtPoint) return false;
-                
-                // Check if element or its parents match our target
-                let current = elementAtPoint;
-                while (current && current !== document.documentElement) {
-                    if (current === element) return true;
-                    current = current.parentElement;
-                }
-                return false;
-            }""", element_node.xpath, x, y)
-
-            return is_correct_element and element_node.is_top_element
-            
-        except Exception as e:
-            logger.error(f"Error verifying element position: {str(e)}")
-            return False
+        return calculate_click_coordinates(
+            element_bounds=element_bounds,
+            window_bounds=window_bounds,
+            validate_bounds=True
+        )
 
     async def perform_click(
         self,
@@ -177,6 +125,8 @@ class PhysicalInputController:
     async def type_text(
         self,
         text: str,
+        x: int | None = None,
+        y: int | None = None,
         click_first: bool = True
     ) -> None:
         """
@@ -184,9 +134,13 @@ class PhysicalInputController:
         
         Args:
             text: Text to type
+            x: Screen x coordinate to click before typing (optional)
+            y: Screen y coordinate to click before typing (optional)
             click_first: Whether to click before typing
         """
         if click_first:
+            if x is not None and y is not None:
+                pyautogui.moveTo(x, y, duration=0.2)
             pyautogui.click()
             time.sleep(0.1)
             

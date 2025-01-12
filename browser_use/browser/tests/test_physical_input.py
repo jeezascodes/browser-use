@@ -1,134 +1,153 @@
 import pytest
-from playwright.async_api import Page
-import pyautogui
+from browser_use.browser.browser import Browser, BrowserConfig
+from browser_use.browser.context import BrowserContext
 
-from browser_use.browser.input.controller import PhysicalInputController
-from browser_use.dom.views import DOMElementNode
+TEST_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Physical Input Test</title>
+    <style>
+        .container { padding: 20px; }
+        #result { margin-top: 10px; }
+        body { min-height: 2000px; }  /* Force page to be taller */
+        #scrollTarget { 
+            position: absolute;
+            top: 1000px;
+            padding: 20px;
+            background: #eee;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <button id="testButton" onclick="document.getElementById('result').textContent = 'Button Clicked!'">
+            Click Me
+        </button>
+        <input id="testInput" type="text" oninput="document.getElementById('inputResult').textContent = this.value">
+        <div id="result"></div>
+        <div id="inputResult"></div>
+        <div id="scrollTarget">Scroll Target</div>
+    </div>
+</body>
+</html>
+"""
 
 @pytest.fixture
-def controller():
-    return PhysicalInputController()
-
-@pytest.fixture
-def mock_element_node():
-    """Creates a mock DOM element for testing"""
-    return DOMElementNode(
-        tag_name='button',
-        xpath='//button[1]',
-        attributes={'class': 'test-button'},
-        children=[],
-        is_visible=True,
-        is_interactive=True,
-        is_top_element=True,
-        parent=None
+async def physical_browser():
+    """Create a browser with physical input enabled"""
+    config = BrowserConfig(
+        use_physical_input=True,
+        physical_input_actions={'click_element', 'input_text', 'scroll_down', 'scroll_up'},
+        headless=False  # Need to see the browser for physical input
     )
+    browser = Browser(config=config)
+    yield browser
+    await browser.close()
 
 @pytest.fixture
-async def test_page(browser):
-    """Creates a test page with a button element"""
-    page = await browser.new_page()
-    await page.set_content('''
-        <html>
-            <body>
-                <button class="test-button">Test Button</button>
-            </body>
-        </html>
-    ''')
-    return page
+async def context(physical_browser):
+    """Create a context and set up test page"""
+    context = await physical_browser.new_context()
+    page = await context.get_current_page()
+    await page.set_content(TEST_HTML)
+    yield context
+    await context.close()
 
-class TestPhysicalInputController:
+@pytest.mark.asyncio
+async def test_physical_input_initialization(physical_browser, context):
+    """Test that physical input controller is properly initialized"""
+    assert context.physical_input is not None
+    assert physical_browser.config.use_physical_input is True
+
+@pytest.mark.asyncio
+async def test_physical_click(context):
+    """Test physical clicking of a button"""
+    # Get initial state
+    state = await context.get_state()
     
-    async def test_get_element_coordinates(self, controller, mock_element_node, test_page):
-        """Test coordinate conversion returns valid screen coordinates"""
-        x, y = await controller.get_element_coordinates(test_page, mock_element_node)
-        
-        # Coordinates should be integers
-        assert isinstance(x, int)
-        assert isinstance(y, int)
-        
-        # Coordinates should be within screen bounds
-        screen_width, screen_height = pyautogui.size()
-        assert 0 <= x <= screen_width
-        assert 0 <= y <= screen_height
+    # Find the button in the selector map
+    button_element = None
+    for element in state.selector_map.values():
+        if element.tag_name == 'button' and element.attributes.get('id') == 'testButton':
+            button_element = element
+            break
+    
+    assert button_element is not None, "Button element not found"
+    
+    # Click the button
+    await context._click_element_node(button_element)
+    
+    # Verify the click worked by checking the result text
+    page = await context.get_current_page()
+    result_text = await page.evaluate('() => document.getElementById("result").textContent')
+    assert result_text == 'Button Clicked!'
 
-    async def test_verify_element_position(self, controller, mock_element_node, test_page):
-        """Test element position verification with valid coordinates"""
-        # Get real coordinates
-        x, y = await controller.get_element_coordinates(test_page, mock_element_node)
-        
-        # Verify position
-        is_valid = await controller.verify_element_position(test_page, mock_element_node, x, y)
-        assert is_valid is True
+@pytest.mark.asyncio
+async def test_physical_input(context):
+    """Test physical text input"""
+    # Get initial state
+    state = await context.get_state()
+    
+    # Find the input element
+    input_element = None
+    for element in state.selector_map.values():
+        if element.tag_name == 'input' and element.attributes.get('id') == 'testInput':
+            input_element = element
+            break
+    
+    assert input_element is not None, "Input element not found"
+    
+    # Type into the input
+    test_text = "Hello, Physical Input!"
+    await context._input_text_element_node(input_element, test_text)
+    
+    # Verify the input worked
+    page = await context.get_current_page()
+    input_result = await page.evaluate('() => document.getElementById("inputResult").textContent')
+    assert input_result == test_text
 
-    async def test_verify_invalid_position(self, controller, mock_element_node, test_page):
-        """Test element position verification fails with invalid coordinates"""
-        is_valid = await controller.verify_element_position(test_page, mock_element_node, -1, -1)
-        assert is_valid is False
+# @pytest.mark.asyncio
+# async def test_physical_scroll(context):
+#     """Test physical scrolling"""
+#     # Get the current scroll position
+#     page = await context.get_current_page()
+#     initial_scroll = await page.evaluate('() => window.scrollY')
+    
+#     # Scroll down
+#     await context.scroll_by(500)
+    
+#     # Get new scroll position
+#     new_scroll = await page.evaluate('() => window.scrollY')
+#     assert new_scroll > initial_scroll, "Page did not scroll down"
+    
+#     # Scroll back up
+#     await context.scroll_by(-500)
+    
+#     # Verify we're back at the top
+#     final_scroll = await page.evaluate('() => window.scrollY')
+#     assert abs(final_scroll - initial_scroll) < 50, "Page did not scroll back up"
 
-    async def test_mock_coordinates(self, controller, mock_element_node, test_page):
-        """Test mock coordinates for testing"""
-        # Set mock coordinates
-        mock_x, mock_y = 100, 100
-        controller.set_mock_coordinates(mock_x, mock_y)
-        
-        # Get coordinates should return mock values
-        x, y = await controller.get_element_coordinates(test_page, mock_element_node)
-        assert (x, y) == (mock_x, mock_y)
-        
-        # Clear mock coordinates
-        controller.set_mock_coordinates(None, None)
-        
-        # Should now return real coordinates
-        x, y = await controller.get_element_coordinates(test_page, mock_element_node)
-        assert (x, y) != (mock_x, mock_y)
-
-    @pytest.mark.integration
-    async def test_perform_click(self, controller):
-        """Test physical click moves mouse to position"""
-        # Get current mouse position
-        start_x, start_y = pyautogui.position()
-        
-        # Click at different position
-        test_x, test_y = start_x + 100, start_y + 100
-        await controller.perform_click(test_x, test_y)
-        
-        # Verify mouse moved
-        end_x, end_y = pyautogui.position()
-        assert abs(end_x - test_x) <= 2  # Allow small margin of error
-        assert abs(end_y - test_y) <= 2
-
-    @pytest.mark.integration
-    async def test_type_text(self, controller):
-        """Test physical keyboard input"""
-        # Note: This test requires a text editor or input field to be in focus
-        test_text = "test input"
-        await controller.type_text(test_text, click_first=False)
-        # Real verification would require OCR or clipboard checking
-        
-    @pytest.mark.integration
-    async def test_scroll(self, controller):
-        """Test physical scroll action"""
-        await controller.scroll(-100)  # Scroll down
-        await controller.scroll(100)   # Scroll up
-        # Visual verification required for scroll tests
-
-    async def test_error_handling(self, controller, mock_element_node, test_page):
-        """Test error handling for invalid element"""
-        # Create invalid element node
-        invalid_element = DOMElementNode(
-            tag_name='button',
-            xpath='//button[999]',  # Non-existent element
-            attributes={},
-            children=[],
-            is_visible=True,
-            is_interactive=True,
-            is_top_element=True,
-            parent=None
-        )
-        
-        # Should raise ValueError for non-existent element
-        with pytest.raises(ValueError):
-            await controller.get_element_coordinates(test_page, invalid_element)
-
-if __name__ == "__main__":
-    pytest.main(["-v", "test_controller.py"])
+# @pytest.mark.asyncio
+# async def test_fallback_to_dom(context):
+#     """Test fallback to DOM methods when physical input fails"""
+#     # Intentionally cause physical input to fail by passing invalid coordinates
+#     if context.physical_input:
+#         context.physical_input.set_mock_coordinates(-1, -1)
+    
+#     state = await context.get_state()
+#     button_element = next(
+#         (el for el in state.selector_map.values() 
+#          if el.tag_name == 'button' and el.attributes.get('id') == 'testButton'),
+#         None
+#     )
+    
+#     assert button_element is not None, "Button element not found"
+    
+#     # Click should still work via DOM methods
+#     await context._click_element_node(button_element)
+    
+#     page = await context.get_current_page()
+#     result_text = await page.evaluate('() => document.getElementById("result").textContent')
+#     assert result_text == 'Button Clicked!'

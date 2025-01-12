@@ -23,6 +23,7 @@ from playwright.async_api import (
 	Page,
 )
 
+from browser_use.browser.input.controller import PhysicalInputController
 from browser_use.browser.views import BrowserError, BrowserState, TabInfo
 from browser_use.dom.service import DomService
 from browser_use.dom.views import DOMElementNode, SelectorMap
@@ -45,38 +46,38 @@ class BrowserContextConfig:
 	Configuration for the BrowserContext.
 
 	Default values:
-		cookies_file: None
-			Path to cookies file for persistence
+			cookies_file: None
+					Path to cookies file for persistence
 
-	        disable_security: False
-	                Disable browser security features
+			disable_security: False
+							Disable browser security features
 
-		minimum_wait_page_load_time: 0.5
-			Minimum time to wait before getting page state for LLM input
+			minimum_wait_page_load_time: 0.5
+					Minimum time to wait before getting page state for LLM input
 
-	        wait_for_network_idle_page_load_time: 1.0
-	                Time to wait for network requests to finish before getting page state.
-	                Lower values may result in incomplete page loads.
+			wait_for_network_idle_page_load_time: 1.0
+							Time to wait for network requests to finish before getting page state.
+							Lower values may result in incomplete page loads.
 
-		maximum_wait_page_load_time: 5.0
-			Maximum time to wait for page load before proceeding anyway
+			maximum_wait_page_load_time: 5.0
+					Maximum time to wait for page load before proceeding anyway
 
-		wait_between_actions: 1.0
-			Time to wait between multiple per step actions
+			wait_between_actions: 1.0
+					Time to wait between multiple per step actions
 
-		browser_window_size: {
-				'width': 1280,
-				'height': 1100,
-			}
-			Default browser window size
+			browser_window_size: {
+							'width': 1280,
+							'height': 1100,
+					}
+					Default browser window size
 
-		no_viewport: False
-			Disable viewport
-		save_recording_path: None
-			Path to save video recordings
+			no_viewport: False
+					Disable viewport
+			save_recording_path: None
+					Path to save video recordings
 
-		trace_path: None
-			Path to save trace files. It will auto name the file with the TRACE_PATH/{context_id}.zip
+			trace_path: None
+					Path to save trace files. It will auto name the file with the TRACE_PATH/{context_id}.zip
 	"""
 
 	cookies_file: str | None = None
@@ -88,7 +89,7 @@ class BrowserContextConfig:
 	disable_security: bool = False
 
 	browser_window_size: BrowserContextWindowSize = field(
-		default_factory=lambda: {'width': 1280, 'height': 1100}
+			default_factory=lambda: {'width': 1280, 'height': 1100}
 	)
 	no_viewport: Optional[bool] = None
 
@@ -105,184 +106,190 @@ class BrowserSession:
 
 class BrowserContext:
 	def __init__(
-		self,
-		browser: 'Browser',
-		config: BrowserContextConfig = BrowserContextConfig(),
+			self,
+			browser: 'Browser',
+			config: BrowserContextConfig = BrowserContextConfig(),
 	):
-		self.context_id = str(uuid.uuid4())
-		logger.debug(f'Initializing new browser context with id: {self.context_id}')
+			self.context_id = str(uuid.uuid4())
+			logger.debug(f'Initializing new browser context with id: {self.context_id}')
 
-		self.config = config
-		self.browser = browser
+			self.config = config
+			self.browser = browser
 
-		# Initialize these as None - they'll be set up when needed
-		self.session: BrowserSession | None = None
+			# Initialize these as None - they'll be set up when needed
+			self.session: BrowserSession | None = None
+			
+			# Initialize physical input controller if enabled
+			self.physical_input: Optional[PhysicalInputController] = None
+			if browser.config.use_physical_input:
+					self.physical_input = PhysicalInputController()
+					logger.debug('Physical input controller initialized')
 
 	async def __aenter__(self):
-		"""Async context manager entry"""
-		await self._initialize_session()
-		return self
+			"""Async context manager entry"""
+			await self._initialize_session()
+			return self
 
 	async def __aexit__(self, exc_type, exc_val, exc_tb):
-		"""Async context manager exit"""
-		await self.close()
+			"""Async context manager exit"""
+			await self.close()
 
 	async def close(self):
-		"""Close the browser instance"""
-		logger.debug('Closing browser context')
-
-		try:
-			# check if already closed
-			if self.session is None:
-				return
-
-			await self.save_cookies()
-
-			if self.config.trace_path:
-				try:
-					await self.session.context.tracing.stop(
-						path=os.path.join(self.config.trace_path, f'{self.context_id}.zip')
-					)
-				except Exception as e:
-					logger.debug(f'Failed to stop tracing: {e}')
+			"""Close the browser instance"""
+			logger.debug('Closing browser context')
 
 			try:
-				await self.session.context.close()
-			except Exception as e:
-				logger.debug(f'Failed to close context: {e}')
-		finally:
-			self.session = None
+					# check if already closed
+					if self.session is None:
+							return
+
+					await self.save_cookies()
+
+					if self.config.trace_path:
+							try:
+									await self.session.context.tracing.stop(
+											path=os.path.join(self.config.trace_path, f'{self.context_id}.zip')
+									)
+							except Exception as e:
+									logger.debug(f'Failed to stop tracing: {e}')
+
+					try:
+							await self.session.context.close()
+					except Exception as e:
+							logger.debug(f'Failed to close context: {e}')
+			finally:
+					self.session = None
 
 	def __del__(self):
-		"""Cleanup when object is destroyed"""
-		if self.session is not None:
-			logger.debug('BrowserContext was not properly closed before destruction')
-			try:
-				# Use sync Playwright method for force cleanup
-				if hasattr(self.session.context, '_impl_obj'):
-					asyncio.run(self.session.context._impl_obj.close())
-				self.session = None
-			except Exception as e:
-				logger.warning(f'Failed to force close browser context: {e}')
+			"""Cleanup when object is destroyed"""
+			if self.session is not None:
+					logger.debug('BrowserContext was not properly closed before destruction')
+					try:
+							# Use sync Playwright method for force cleanup
+							if hasattr(self.session.context, '_impl_obj'):
+									asyncio.run(self.session.context._impl_obj.close())
+							self.session = None
+					except Exception as e:
+							logger.warning(f'Failed to force close browser context: {e}')
 
 	async def _initialize_session(self):
-		"""Initialize the browser session"""
-		logger.debug('Initializing browser context')
+			"""Initialize the browser session"""
+			logger.debug('Initializing browser context')
 
-		playwright_browser = await self.browser.get_playwright_browser()
+			playwright_browser = await self.browser.get_playwright_browser()
 
-		context = await self._create_context(playwright_browser)
-		page = await context.new_page()
+			context = await self._create_context(playwright_browser)
+			page = await context.new_page()
 
-		# Instead of calling _update_state(), create an empty initial state
-		initial_state = BrowserState(
-			element_tree=DOMElementNode(
-				tag_name='root',
-				is_visible=True,
-				parent=None,
-				xpath='',
-				attributes={},
-				children=[],
-			),
-			selector_map={},
-			url=page.url,
-			title=await page.title(),
-			screenshot=None,
-			tabs=[],
-		)
-
-		self.session = BrowserSession(
-			context=context,
-			current_page=page,
-			cached_state=initial_state,
-		)
-
-		await self._add_new_page_listener(context)
-
-		return self.session
-
-	async def _add_new_page_listener(self, context: PlaywrightBrowserContext):
-		async def on_page(page: Page):
-			await page.wait_for_load_state()
-			logger.debug(f'New page opened: {page.url}')
-			if self.session is not None:
-				self.session.current_page = page
-
-		context.on('page', on_page)
-
-	async def get_session(self) -> BrowserSession:
-		"""Lazy initialization of the browser and related components"""
-		if self.session is None:
-			return await self._initialize_session()
-		return self.session
-
-	async def get_current_page(self) -> Page:
-		"""Get the current page"""
-		session = await self.get_session()
-		return session.current_page
-
-	async def _create_context(self, browser: PlaywrightBrowser):
-		"""Creates a new browser context with anti-detection measures and loads cookies if available."""
-		if self.browser.config.chrome_instance_path and len(browser.contexts) > 0:
-			# Connect to existing Chrome instance instead of creating new one
-			context = browser.contexts[0]
-		else:
-			# Original code for creating new context
-			context = await browser.new_context(
-				viewport=self.config.browser_window_size,
-				no_viewport=False,
-				user_agent=(
-					'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-					'(KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36'
-				),
-				java_script_enabled=True,
-				bypass_csp=self.config.disable_security,
-				ignore_https_errors=self.config.disable_security,
-				record_video_dir=self.config.save_recording_path,
+			# Instead of calling _update_state(), create an empty initial state
+			initial_state = BrowserState(
+					element_tree=DOMElementNode(
+							tag_name='root',
+							is_visible=True,
+							parent=None,
+							xpath='',
+							attributes={},
+							children=[],
+					),
+					selector_map={},
+					url=page.url,
+					title=await page.title(),
+					screenshot=None,
+					tabs=[],
 			)
 
-		if self.config.trace_path:
-			await context.tracing.start(screenshots=True, snapshots=True, sources=True)
+			self.session = BrowserSession(
+					context=context,
+					current_page=page,
+					cached_state=initial_state,
+			)
 
-		# Load cookies if they exist
-		if self.config.cookies_file and os.path.exists(self.config.cookies_file):
-			with open(self.config.cookies_file, 'r') as f:
-				cookies = json.load(f)
-				logger.info(f'Loaded {len(cookies)} cookies from {self.config.cookies_file}')
-				await context.add_cookies(cookies)
+			await self._add_new_page_listener(context)
 
-		# Expose anti-detection scripts
-		await context.add_init_script(
-			"""
-			// Webdriver property
-			Object.defineProperty(navigator, 'webdriver', {
-				get: () => undefined
-			});
+			return self.session
 
-			// Languages
-			Object.defineProperty(navigator, 'languages', {
-				get: () => ['en-US', 'en']
-			});
+	async def _add_new_page_listener(self, context: PlaywrightBrowserContext):
+			async def on_page(page: Page):
+					await page.wait_for_load_state()
+					logger.debug(f'New page opened: {page.url}')
+					if self.session is not None:
+							self.session.current_page = page
 
-			// Plugins
-			Object.defineProperty(navigator, 'plugins', {
-				get: () => [1, 2, 3, 4, 5]
-			});
+			context.on('page', on_page)
 
-			// Chrome runtime
-			window.chrome = { runtime: {} };
+	async def get_session(self) -> BrowserSession:
+			"""Lazy initialization of the browser and related components"""
+			if self.session is None:
+					return await self._initialize_session()
+			return self.session
 
-			// Permissions
-			const originalQuery = window.navigator.permissions.query;
-			window.navigator.permissions.query = (parameters) => (
-				parameters.name === 'notifications' ?
-					Promise.resolve({ state: Notification.permission }) :
-					originalQuery(parameters)
-			);
-			"""
-		)
+	async def get_current_page(self) -> Page:
+			"""Get the current page"""
+			session = await self.get_session()
+			return session.current_page
 
-		return context
+	async def _create_context(self, browser: PlaywrightBrowser):
+			"""Creates a new browser context with anti-detection measures and loads cookies if available."""
+			if self.browser.config.chrome_instance_path and len(browser.contexts) > 0:
+					# Connect to existing Chrome instance instead of creating new one
+					context = browser.contexts[0]
+			else:
+					# Original code for creating new context
+					context = await browser.new_context(
+							viewport=self.config.browser_window_size,
+							no_viewport=False,
+							user_agent=(
+									'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+									'(KHTML, like Gecko) Chrome/85.0.4183.102 Safari/537.36'
+							),
+							java_script_enabled=True,
+							bypass_csp=self.config.disable_security,
+							ignore_https_errors=self.config.disable_security,
+							record_video_dir=self.config.save_recording_path,
+					)
+
+			if self.config.trace_path:
+					await context.tracing.start(screenshots=True, snapshots=True, sources=True)
+
+			# Load cookies if they exist
+			if self.config.cookies_file and os.path.exists(self.config.cookies_file):
+					with open(self.config.cookies_file, 'r') as f:
+							cookies = json.load(f)
+							logger.info(f'Loaded {len(cookies)} cookies from {self.config.cookies_file}')
+							await context.add_cookies(cookies)
+
+			# Expose anti-detection scripts
+			await context.add_init_script(
+					"""
+					// Webdriver property
+					Object.defineProperty(navigator, 'webdriver', {
+							get: () => undefined
+					});
+
+					// Languages
+					Object.defineProperty(navigator, 'languages', {
+							get: () => ['en-US', 'en']
+					});
+
+					// Plugins
+					Object.defineProperty(navigator, 'plugins', {
+							get: () => [1, 2, 3, 4, 5]
+					});
+
+					// Chrome runtime
+					window.chrome = { runtime: {} };
+
+					// Permissions
+					const originalQuery = window.navigator.permissions.query;
+					window.navigator.permissions.query = (parameters) => (
+							parameters.name === 'notifications' ?
+									Promise.resolve({ state: Notification.permission }) :
+									originalQuery(parameters)
+					);
+					"""
+			)
+
+			return context
 
 	async def _wait_for_stable_network(self):
 		page = await self.get_current_page()
@@ -826,49 +833,110 @@ class BrowserContext:
 			return None
 
 	async def _input_text_element_node(self, element_node: DOMElementNode, text: str):
-		try:
+			"""
+			Input text into an element using either physical input or DOM methods.
+			Falls back to DOM methods if physical input fails.
+			"""
 			page = await self.get_current_page()
-			element = await self.get_locate_element(element_node)
 
-			if element is None:
-				raise Exception(f'Element: {repr(element_node)} not found')
+			# Try physical input if enabled
+			if (
+					self.physical_input is not None 
+					and 'input_text' in self.browser.config.physical_input_actions
+			):
+					try:
+							x, y = await self.physical_input.get_element_coordinates(page, element_node)
+							await self.physical_input.type_text(text, x=x, y=y, click_first=True)
+							await page.wait_for_load_state()
+							return
+					except Exception as e:
+							logger.debug(f"Physical input failed, falling back to DOM input: {str(e)}")
 
-			await element.scroll_into_view_if_needed(timeout=2500)
-			await element.fill('')
-			await element.type(text)
-			await page.wait_for_load_state()
+			# Fall back to DOM input
+			try:
+					element = await self.get_locate_element(element_node)
 
-		except Exception as e:
-			raise Exception(
-				f'Failed to input text into element: {repr(element_node)}. Error: {str(e)}'
-			)
+					if element is None:
+							raise Exception(f'Element: {repr(element_node)} not found')
+
+					await element.scroll_into_view_if_needed(timeout=2500)
+					await element.fill('')
+					await element.type(text)
+					await page.wait_for_load_state()
+
+			except Exception as e:
+					raise Exception(
+							f'Failed to input text into element: {repr(element_node)}. Error: {str(e)}'
+					)
+			
+	async def scroll_by(self, amount: int) -> None:
+			"""
+			Scroll the page by a given amount using either physical input or DOM methods.
+			
+			Args:
+					amount: Number of pixels to scroll. Positive for down, negative for up.
+			"""
+			action_type = 'scroll_up' if amount < 0 else 'scroll_down'
+			
+			# Try physical scroll if enabled
+			if (
+					self.physical_input is not None 
+					and action_type in self.browser.config.physical_input_actions
+			):
+					try:
+							await self.physical_input.scroll(amount)
+							await asyncio.sleep(0.5)  # Wait for scroll to complete
+							return
+					except Exception as e:
+							logger.debug(f"Physical scroll failed, falling back to DOM scroll: {str(e)}")
+
+			# Fall back to DOM scroll
+			page = await self.get_current_page()
+			await page.evaluate(f'window.scrollBy(0, {amount});')
+			await asyncio.sleep(0.5)  # Wait for scroll to complete
 
 	async def _click_element_node(self, element_node: DOMElementNode):
-		"""
-		Optimized method to click an element using xpath.
-		"""
-		page = await self.get_current_page()
+			"""
+			Click an element using either physical input or DOM methods.
+			Falls back to DOM methods if physical input fails.
+			"""
+			page = await self.get_current_page()
+			# Try physical click if enabled
+			print(f"Physical input enabled: {self.physical_input is not None}")  # Add this
+			print(f"Click element in actions: {'click_element' in self.browser.config.physical_input_actions}")  # And this
+			# Try physical click if enabled
+			if (
+					self.physical_input is not None 
+					and 'click_element' in self.browser.config.physical_input_actions
+			):
+					try:
+							x, y = await self.physical_input.get_element_coordinates(page, element_node)
+							print("Position verified, performing click")  # And this
+							await self.physical_input.perform_click(x, y)
+							await page.wait_for_load_state()
+							return
+					except Exception as e:
+							logger.debug(f"Physical click failed, falling back to DOM click: {str(e)}")
 
-		try:
-			element = await self.get_locate_element(element_node)
-
-			if element is None:
-				raise Exception(f'Element: {repr(element_node)} not found')
-
-			# await element.scroll_into_view_if_needed()
-
+			# Fall back to DOM click
 			try:
-				await element.click(timeout=1500)
-				await page.wait_for_load_state()
-			except Exception:
-				try:
-					await page.evaluate('(el) => el.click()', element)
-					await page.wait_for_load_state()
-				except Exception as e:
-					raise Exception(f'Failed to click element: {str(e)}')
+					element = await self.get_locate_element(element_node)
 
-		except Exception as e:
-			raise Exception(f'Failed to click element: {repr(element_node)}. Error: {str(e)}')
+					if element is None:
+							raise Exception(f'Element: {repr(element_node)} not found')
+
+					try:
+							await element.click(timeout=1500)
+							await page.wait_for_load_state()
+					except Exception:
+							try:
+									await page.evaluate('(el) => el.click()', element)
+									await page.wait_for_load_state()
+							except Exception as e:
+									raise Exception(f'Failed to click element: {str(e)}')
+
+			except Exception as e:
+					raise Exception(f'Failed to click element: {repr(element_node)}. Error: {str(e)}')
 
 	async def get_tabs_info(self) -> list[TabInfo]:
 		"""Get information about all tabs"""
