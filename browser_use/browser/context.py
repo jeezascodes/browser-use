@@ -901,9 +901,7 @@ class BrowserContext:
 			Falls back to DOM methods if physical input fails.
 			"""
 			page = await self.get_current_page()
-			# Try physical click if enabled
-			print(f"Physical input enabled: {self.physical_input is not None}")  # Add this
-			print(f"Click element in actions: {'click_element' in self.browser.config.physical_input_actions}")  # And this
+
 			# Try physical click if enabled
 			if (
 					self.physical_input is not None 
@@ -911,11 +909,12 @@ class BrowserContext:
 			):
 					try:
 							x, y = await self.physical_input.get_element_coordinates(page, element_node)
-							print("Position verified, performing click")  # And this
 							await self.physical_input.perform_click(x, y)
 							await page.wait_for_load_state()
 							return
-					except Exception as e:
+					except ValueError as e:  # Coordinate validation errors
+							logger.debug(f"Invalid coordinates, falling back to DOM click: {str(e)}")
+					except Exception as e:  # Other errors
 							logger.debug(f"Physical click failed, falling back to DOM click: {str(e)}")
 
 			# Fall back to DOM click

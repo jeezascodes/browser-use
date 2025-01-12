@@ -108,46 +108,46 @@ async def test_physical_input(context):
     input_result = await page.evaluate('() => document.getElementById("inputResult").textContent')
     assert input_result == test_text
 
-# @pytest.mark.asyncio
-# async def test_physical_scroll(context):
-#     """Test physical scrolling"""
-#     # Get the current scroll position
-#     page = await context.get_current_page()
-#     initial_scroll = await page.evaluate('() => window.scrollY')
+@pytest.mark.asyncio
+async def test_physical_scroll(context):
+    """Test physical scrolling"""
+    # Get the current scroll position
+    page = await context.get_current_page()
+    initial_scroll = await page.evaluate('() => window.scrollY')
     
-#     # Scroll down
-#     await context.scroll_by(500)
+    # Scroll down
+    await context.scroll_by(-500)
     
-#     # Get new scroll position
-#     new_scroll = await page.evaluate('() => window.scrollY')
-#     assert new_scroll > initial_scroll, "Page did not scroll down"
+    # Get new scroll position
+    new_scroll = await page.evaluate('() => window.scrollY')
+    assert new_scroll > initial_scroll, "Page did not scroll down"
     
-#     # Scroll back up
-#     await context.scroll_by(-500)
+    # Scroll back up
+    await context.scroll_by(500)
     
-#     # Verify we're back at the top
-#     final_scroll = await page.evaluate('() => window.scrollY')
-#     assert abs(final_scroll - initial_scroll) < 50, "Page did not scroll back up"
+    # Verify we're back at the top
+    final_scroll = await page.evaluate('() => window.scrollY')
+    assert abs(final_scroll - initial_scroll) < 50, "Page did not scroll back up"
 
-# @pytest.mark.asyncio
-# async def test_fallback_to_dom(context):
-#     """Test fallback to DOM methods when physical input fails"""
-#     # Intentionally cause physical input to fail by passing invalid coordinates
-#     if context.physical_input:
-#         context.physical_input.set_mock_coordinates(-1, -1)
+@pytest.mark.asyncio
+async def test_fallback_to_dom(context):
+    """Test fallback to DOM methods when physical input fails"""
+    # Intentionally cause physical input to fail by passing invalid coordinates
+    if context.physical_input:
+        context.physical_input.set_mock_coordinates(-1, -1)
     
-#     state = await context.get_state()
-#     button_element = next(
-#         (el for el in state.selector_map.values() 
-#          if el.tag_name == 'button' and el.attributes.get('id') == 'testButton'),
-#         None
-#     )
+    state = await context.get_state()
+    button_element = next(
+        (el for el in state.selector_map.values() 
+         if el.tag_name == 'button' and el.attributes.get('id') == 'testButton'),
+        None
+    )
     
-#     assert button_element is not None, "Button element not found"
+    assert button_element is not None, "Button element not found"
     
-#     # Click should still work via DOM methods
-#     await context._click_element_node(button_element)
+    # Click should still work via DOM methods
+    await context._click_element_node(button_element)
     
-#     page = await context.get_current_page()
-#     result_text = await page.evaluate('() => document.getElementById("result").textContent')
-#     assert result_text == 'Button Clicked!'
+    page = await context.get_current_page()
+    result_text = await page.evaluate('() => document.getElementById("result").textContent')
+    assert result_text == 'Button Clicked!'
