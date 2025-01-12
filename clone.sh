@@ -8,7 +8,6 @@ find . -type f \
     ! -path "*/.github/*" \
     ! -path "*/.venv/*" \
     ! -path "*/.vscode/*" \
-    ! -path "*/examples/*" \
     ! -path "*/static/*" \
     ! -path "*/tests/*" \
     ! -path "*/knowledge/*" \
